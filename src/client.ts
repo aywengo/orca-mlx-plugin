@@ -236,7 +236,8 @@ export function modelsFromResponse(body: unknown): ModelSummary[] {
       virtual: record.virtual === true,
       engineType: typeof record.engine_type === 'string' ? record.engine_type : 'batched',
       modelType: typeof record.model_type === 'string' ? record.model_type : 'llm',
-      sizeLabel: typeof record.estimated_size_formatted === 'string' ? record.estimated_size_formatted : '—'
+      sizeLabel: typeof record.estimated_size_formatted === 'string' ? record.estimated_size_formatted : '—',
+      sizeBytes: bytesOf(record)
     })
   }
   return models
@@ -258,7 +259,9 @@ export function activityFromResponse(body: unknown): Activity {
     }),
     memoryUsedLabel:
       pressure && typeof pressure.current_formatted === 'string' ? pressure.current_formatted : formatBytes(used),
-    memoryMaxLabel: pressure && typeof pressure.hard_formatted === 'string' ? pressure.hard_formatted : formatBytes(max)
+    memoryMaxLabel: pressure && typeof pressure.hard_formatted === 'string' ? pressure.hard_formatted : formatBytes(max),
+    memoryUsedBytes: used,
+    memoryMaxBytes: max
   }
 }
 
@@ -520,6 +523,7 @@ function activityModel(value: unknown): ActivityModel | null {
   return {
     id: record.id,
     sizeLabel: size,
+    sizeBytes: bytesOf(record),
     pinned: record.pinned === true,
     loading: record.is_loading === true,
     activeRequests: typeof record.active_requests === 'number' ? record.active_requests : 0,
@@ -542,7 +546,17 @@ function pushRows(
     if (!record) continue
     const id = record.request_id ?? record.id
     if (typeof id !== 'string' && typeof id !== 'number') continue
-    target.push({ id: String(id), phase, detail: requestDetail(record, phase, fallback) })
+    const progress =
+      typeof record.processed === 'number' && typeof record.total === 'number' && record.total > 0
+        ? Math.max(0, Math.min(100, Math.round((record.processed / record.total) * 100)))
+        : null
+    target.push({
+      id: String(id),
+      phase,
+      detail: requestDetail(record, phase, fallback),
+      progress,
+      tokensPerSecond: phase === 'generating' && typeof record.tokens_per_second === 'number' ? record.tokens_per_second : null
+    })
   }
 }
 
@@ -560,6 +574,12 @@ function requestDetail(record: Record<string, unknown>, phase: ActivityRequest['
     if (typeof record[key] === 'string' && record[key]) return record[key]
   }
   return fallback
+}
+
+function bytesOf(record: Record<string, unknown>): number {
+  if (typeof record.actual_size === 'number' && record.actual_size > 0) return record.actual_size
+  if (typeof record.estimated_size === 'number' && record.estimated_size > 0) return record.estimated_size
+  return 0
 }
 
 function arrayField(body: unknown, key: string, label: string): unknown[] {

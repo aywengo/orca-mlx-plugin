@@ -2,7 +2,6 @@ import {
   Badge,
   Button,
   Callout,
-  Card,
   CodeView,
   Collapsible,
   EmptyState,
@@ -10,6 +9,8 @@ import {
   Heading,
   IconButton,
   Input,
+  Progress,
+  RelativeTime,
   Row,
   Select,
   Spinner,
@@ -30,7 +31,15 @@ import {
 } from 'orca'
 import { assertApiKey, draftFromSettings, draftToPatch, normalizeBaseUrl, OmlxError } from './client.ts'
 import './protocol.ts'
-import type { Activity, BaseSettings, JobEvent, ModelSummary, Overview, SettingsDraft } from './types.ts'
+import type { Activity, ActivityModel, BaseSettings, JobEvent, ModelSummary, Overview, SettingsDraft } from './types.ts'
+
+interface UsageSample {
+  at: number
+  memoryPercent: number
+  loaded: number
+  active: number
+  waiting: number
+}
 
 const orca = { host }
 
@@ -47,6 +56,8 @@ const notice = atom<string | null>(null)
 const selectedModel = atom<string | null>(null)
 const selectedRequest = atom<string | null>(null)
 const tab = atom('tab', 'models')
+const connectionOpen = atom('connectionOpen', true, { persist: 'plugin' })
+const history = atom<UsageSample[]>('usageHistory', [])
 const keyDraft = atom('')
 const rotateDraft = atom('')
 const urlDraft = atom('urlDraft', 'http://127.0.0.1:8000')
@@ -65,7 +76,10 @@ export function setup(ctx: PanelContext): void {
       if (event.state === 'done' && event.kind === 'settings') set(dirty, false)
       if (event.state !== 'running') void reload()
     }),
-    plugin.on('omlx.activity', (value) => set(activity, value)),
+    plugin.on('omlx.activity', (value) => {
+      set(activity, value)
+      recordUsage(value, read(models))
+    }),
     plugin.on('omlx.status', (value) => {
       update(overview, (current) => (current ? { ...current, ...value } : current))
     })
@@ -83,7 +97,14 @@ export default function Panel() {
         <Heading level={2}>oMLX</Heading>
         <IconButton icon="refresh" label="Refresh" onPress={() => void reload()} />
       </Row>
-      <ConnectionCard />
+      <Collapsible
+        title="Connection"
+        description={connectionSummary(read(overview))}
+        open={read(connectionOpen)}
+        onChange={(open) => set(connectionOpen, open)}
+      >
+        <ConnectionCard />
+      </Collapsible>
       {read(jobs)
         .filter((job) => job.state === 'running')
         .map((job) => (
@@ -103,6 +124,9 @@ export default function Panel() {
         <Tab value="running" label="Running">
           <RunningTab />
         </Tab>
+        <Tab value="charts" label="Charts">
+          <ChartsTab />
+        </Tab>
         <Tab value="settings" label="Settings">
           <SettingsTab />
         </Tab>
@@ -118,8 +142,7 @@ function ConnectionCard() {
   const current = read(overview)
   const status = current?.status ?? 'error'
   return (
-    <Card title="Connection" description={current?.baseUrl || 'Server URL'}>
-      <Stack gap="sm">
+    <Stack gap="sm">
         <Row gap="sm" wrap>
           <Badge tone={status === 'ok' ? 'success' : status === 'unauthorized' ? 'warning' : 'danger'}>
             {statusLabel(status)}
@@ -175,8 +198,7 @@ function ConnectionCard() {
         <Button variant="outline" onPress={() => void saveUrl()}>
           Save URL
         </Button>
-      </Stack>
-    </Card>
+    </Stack>
   )
 }
 
@@ -316,6 +338,122 @@ function RunningTab() {
         Stop request
       </Button>
       {model && !model.canAbort ? <Text muted>This engine cannot stop a single request.</Text> : null}
+    </Stack>
+  )
+}
+
+function ChartsTab() {
+  const current = read(activity)
+  const catalog = read(models)
+  const samples = read(history)
+  const loaded = current?.models ?? []
+  const largest = loaded.reduce((max, model) => Math.max(max, model.sizeBytes), 0)
+  const busiest = loaded.reduce((max, model) => Math.max(max, model.activeRequests + model.waitingRequests), 0)
+  const fastest = loaded.reduce((max, model) => Math.max(max, speedOf(model)), 0)
+  const prefills = loaded.flatMap((model) =>
+    model.requests
+      .filter((request) => request.progress != null)
+      .map((request) => ({
+        key: `${model.id}:${request.id}`,
+        label: `${model.id} ${request.phase}`,
+        detail: request.detail,
+        value: request.progress ?? 0
+      }))
+  )
+  const total = catalog.length
+  const loading = catalog.filter((model) => model.loading).length
+  const resident = catalog.filter((model) => model.loaded).length
+  const waiting = Math.max(0, total - resident - loading)
+  const recent = [...samples].reverse().slice(0, 8)
+  return (
+    <Stack gap="md">
+      <Meter
+        label="Model memory"
+        value={percent(current?.memoryUsedBytes ?? 0, current?.memoryMaxBytes ?? 0)}
+        detail={`${current?.memoryUsedLabel ?? '—'} of ${current?.memoryMaxLabel ?? '—'}`}
+      />
+      {total === 0 ? (
+        <EmptyState title="No model inventory yet" description="Sizes and request bars appear after oMLX returns its model list." icon="bar-chart-3" />
+      ) : (
+        <Stack gap="xs">
+          <Text weight="medium">Discovered models</Text>
+          <Meter label="Loaded" value={percent(resident, total)} detail={`${resident} of ${total}`} />
+          <Meter label="Loading" value={percent(loading, total)} detail={String(loading)} />
+          <Meter label="Not loaded" value={percent(waiting, total)} detail={String(waiting)} />
+        </Stack>
+      )}
+      {loaded.length > 0 ? (
+        <Stack gap="xs">
+          <Text weight="medium">Loaded size</Text>
+          {loaded.map((model) => (
+            <Meter key={model.id} label={model.id} value={percent(model.sizeBytes, largest)} detail={model.sizeLabel} />
+          ))}
+        </Stack>
+      ) : null}
+      {loaded.length > 0 ? (
+        <Stack gap="xs">
+          <Text weight="medium">Live requests</Text>
+          {loaded.map((model) => (
+            <Meter
+              key={`${model.id}-requests`}
+              label={model.id}
+              value={busiest > 0 ? percent(model.activeRequests + model.waitingRequests, busiest) : 0}
+              detail={`${model.activeRequests} active · ${model.waitingRequests} waiting`}
+            />
+          ))}
+        </Stack>
+      ) : null}
+      {fastest > 0 ? (
+        <Stack gap="xs">
+          <Text weight="medium">Generation speed</Text>
+          {loaded.map((model) => {
+            const speed = speedOf(model)
+            return speed > 0 ? (
+              <Meter key={`${model.id}-speed`} label={model.id} value={percent(speed, fastest)} detail={`${speed.toFixed(1)} tok/s`} />
+            ) : null
+          })}
+        </Stack>
+      ) : null}
+      {prefills.length > 0 ? (
+        <Stack gap="xs">
+          <Text weight="medium">Prefill progress</Text>
+          {prefills.map((item) => (
+            <Meter key={item.key} label={item.label} value={item.value} detail={item.detail} />
+          ))}
+        </Stack>
+      ) : null}
+      {recent.length > 0 ? (
+        <Stack gap="xs">
+          <Text weight="medium">Memory over recent polls</Text>
+          {recent.map((sample) => (
+            <Stack key={String(sample.at)} gap="xs">
+              <Row justify="between" align="center">
+                <RelativeTime at={sample.at} format="short" muted />
+                <Text size="sm" muted>
+                  {sample.loaded} loaded · {sample.active} active
+                </Text>
+              </Row>
+              <Progress label={`Memory at ${sample.at}`} labelHidden value={sample.memoryPercent} />
+            </Stack>
+          ))}
+        </Stack>
+      ) : (
+        <Text muted>The memory history fills in on the next poll.</Text>
+      )}
+    </Stack>
+  )
+}
+
+function Meter(props: { label: string; value: number; detail: string }) {
+  return (
+    <Stack gap="xs">
+      <Row justify="between" align="center">
+        <Text size="sm">{props.label}</Text>
+        <Text size="sm" muted>
+          {props.detail}
+        </Text>
+      </Row>
+      <Progress label={props.label} labelHidden value={props.value} />
     </Stack>
   )
 }
@@ -519,6 +657,7 @@ async function reload(): Promise<void> {
     set(overview, data.overview)
     set(models, data.models)
     set(activity, data.activity)
+    recordUsage(data.activity, data.models)
     set(settings, data.settings)
     set(settingsError, data.settingsError)
     set(jobs, data.jobs)
@@ -686,6 +825,46 @@ function flagsFor(model: ModelSummary): string {
 function deviceLine(device: NonNullable<Overview['device']>): string {
   const chip = device.chipVariant ? `${device.chipName} ${device.chipVariant}` : device.chipName
   return `${chip} · ${device.memoryGb} GB · ${device.gpuCores} GPU cores`
+}
+
+function connectionSummary(current: Overview | null): string {
+  if (!current) return 'Server URL and API key'
+  const where = current.server ? `${current.server.host}:${current.server.port}` : current.baseUrl || 'No URL'
+  return `${statusLabel(current.status)} · ${where} · ${current.keySaved ? 'Key saved' : 'No key'}`
+}
+
+function recordUsage(current: Activity, catalog: ModelSummary[]): void {
+  const active = current.models.reduce((sum, model) => sum + model.activeRequests, 0)
+  const waiting = current.models.reduce((sum, model) => sum + model.waitingRequests, 0)
+  const sample: UsageSample = {
+    at: Date.now(),
+    memoryPercent: percent(current.memoryUsedBytes, current.memoryMaxBytes),
+    loaded: catalog.filter((model) => model.loaded).length || current.models.length,
+    active,
+    waiting
+  }
+  update(history, (list) => {
+    const last = list[list.length - 1]
+    if (
+      last &&
+      sample.at - last.at < 2000 &&
+      last.memoryPercent === sample.memoryPercent &&
+      last.active === sample.active &&
+      last.loaded === sample.loaded
+    ) {
+      return list
+    }
+    return [...list, sample].slice(-24)
+  })
+}
+
+function speedOf(model: ActivityModel): number {
+  return model.requests.reduce((sum, request) => sum + (request.tokensPerSecond ?? 0), 0)
+}
+
+function percent(part: number, whole: number): number {
+  if (!Number.isFinite(part) || !Number.isFinite(whole) || whole <= 0) return 0
+  return Math.max(0, Math.min(100, Math.round((part / whole) * 100)))
 }
 
 function statusLabel(status: Overview['status']): string {

@@ -40,17 +40,21 @@ export interface ModelSummary {
   engineType: string
   modelType: string
   sizeLabel: string
+  sizeBytes: number
 }
 
 export interface ActivityRequest {
   id: string
   phase: 'waiting' | 'prefilling' | 'generating' | 'other'
   detail: string
+  progress: number | null
+  tokensPerSecond: number | null
 }
 
 export interface ActivityModel {
   id: string
   sizeLabel: string
+  sizeBytes: number
   pinned: boolean
   loading: boolean
   activeRequests: number
@@ -64,6 +68,8 @@ export interface Activity {
   models: ActivityModel[]
   memoryUsedLabel: string
   memoryMaxLabel: string
+  memoryUsedBytes: number
+  memoryMaxBytes: number
 }
 
 export interface ServerInfo {

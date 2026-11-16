@@ -434,7 +434,7 @@ function emptyRefresh(message: string, status: ConnectionStatus): RefreshData {
 }
 
 function emptyActivity(): Activity {
-  return { models: [], memoryUsedLabel: '—', memoryMaxLabel: '—' }
+  return { models: [], memoryUsedLabel: '—', memoryMaxLabel: '—', memoryUsedBytes: 0, memoryMaxBytes: 0 }
 }
 
 function asOmlx(error: unknown): OmlxError {

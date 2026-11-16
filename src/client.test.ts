@@ -119,6 +119,7 @@ test('admin client sends the bearer key, encodes model ids, and redacts settings
           models: [
             {
               id: 'Qwen 3',
+              estimated_size: 4_200_000_000,
               estimated_size_formatted: '4.2 GB',
               pinned: true,
               is_loading: false,
@@ -156,6 +157,11 @@ test('admin client sends the bearer key, encodes model ids, and redacts settings
 
     const activity = await client.activity()
     assert.equal(activity.models[0]?.requests.length, 3)
+    assert.equal(activity.models[0]?.sizeBytes, 4_200_000_000)
+    assert.equal(activity.models[0]?.requests.find((request) => request.id === 'gen-1')?.tokensPerSecond, 30.5)
+    assert.equal(activity.models[0]?.requests.find((request) => request.id === 'prefill-1')?.progress, 25)
+    assert.equal(activity.memoryUsedBytes, 1024)
+    assert.equal(activity.memoryMaxBytes, 2048)
     assert.equal(activity.memoryUsedLabel, '1 KB')
     assert.equal(JSON.stringify(activity).includes(SECRET), false)
     assert.ok(seen.some((line) => line.startsWith('GET /admin/api/global-settings Bearer ')))

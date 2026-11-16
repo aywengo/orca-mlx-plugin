@@ -6,7 +6,8 @@ The panel cannot open network connections. A trusted worker calls the oMLX admin
 
 ## What you can do
 
-- Save the main API key. The panel shows whether a key is stored, and never shows the key again.
+- Save the main API key. The panel shows whether a key is stored, and never shows the key again. The connection section collapses, and that choice is remembered.
+- See bar meters for memory, model size, live requests, prefill, generation speed, and recent memory samples.
 - Set the server URL (default `http://127.0.0.1:8000`) and how often the status bar polls.
 - Load, unload, pin, and mark a default model. Rescan the model directories.
 - Watch models that are loaded, including waiting, prefill, and generation, and abort one request.
