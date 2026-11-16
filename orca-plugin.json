@@ -1,0 +1,58 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "execution": "trusted-worker",
+  "id": "omlx",
+  "name": "oMLX",
+  "version": "1.0.0",
+  "description": "Connect to a running oMLX server, load and unload models, see what is in memory, and edit base settings.",
+  "license": "MIT",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "pluginApi": 1,
+  "main": "worker/main.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "manager",
+        "title": "oMLX",
+        "icon": "database",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ],
+    "settings": [
+      {
+        "key": "baseUrl",
+        "title": "Server URL",
+        "description": "oMLX admin origin. The usual local server is http://127.0.0.1:8000.",
+        "type": "string",
+        "default": "http://127.0.0.1:8000",
+        "placeholder": "http://127.0.0.1:8000"
+      },
+      {
+        "key": "pollSeconds",
+        "title": "Status poll interval",
+        "description": "How often the status bar asks oMLX which models are loaded. 0 pauses background polling.",
+        "type": "integer",
+        "default": 5,
+        "minimum": 0,
+        "maximum": 300
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "loads",
+        "text": "oMLX",
+        "icon": "database",
+        "tooltip": "oMLX loaded models"
+      }
+    ]
+  },
+  "capabilities": [
+    { "kind": "secrets:own" },
+    { "kind": "settings:own" },
+    { "kind": "notifications:show" }
+  ]
+}
