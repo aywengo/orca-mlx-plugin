@@ -4,7 +4,7 @@
   "execution": "trusted-worker",
   "id": "omlx",
   "name": "oMLX",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Connect to a running oMLX server, load and unload models, see what is in memory, and edit base settings.",
   "license": "MIT",
   "engines": {

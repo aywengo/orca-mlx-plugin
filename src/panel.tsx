@@ -7,9 +7,11 @@ import {
   Collapsible,
   EmptyState,
   Field,
+  Grid,
   Heading,
   IconButton,
   Input,
+  Progress,
   RelativeTime,
   Row,
   Select,
@@ -349,144 +351,181 @@ function ChartsTab() {
   const samples = read(history)
   const loaded = current?.models ?? []
   const largest = loaded.reduce((max, model) => Math.max(max, model.sizeBytes), 0)
-  const busiest = loaded.reduce((max, model) => Math.max(max, model.activeRequests + model.waitingRequests), 0)
-  const fastest = loaded.reduce((max, model) => Math.max(max, speedOf(model)), 0)
-  const prefills = loaded.flatMap((model) =>
-    model.requests
-      .filter((request) => request.progress != null)
-      .map((request) => ({
-        key: `${model.id}:${request.id}`,
-        label: `${model.id} ${request.phase}`,
-        detail: request.detail,
-        value: request.progress ?? 0
-      }))
-  )
   const total = catalog.length
-  const loading = catalog.filter((model) => model.loading).length
+  const loadingCount = catalog.filter((model) => model.loading).length
   const resident = catalog.filter((model) => model.loaded).length
-  const waiting = Math.max(0, total - resident - loading)
-  const recent = [...samples].reverse().slice(0, 8)
+  const waiting = Math.max(0, total - resident - loadingCount)
+  const trail = samples.slice(-16)
+  const latest = trail[trail.length - 1] ?? null
+  const oldest = trail[0] ?? null
+  const [loadedShare, loadingShare] = shareWidths([resident, loadingCount, waiting])
+  const memoryNow = percent(current?.memoryUsedBytes ?? 0, current?.memoryMaxBytes ?? 0)
+  const active = loaded.reduce((sum, model) => sum + model.activeRequests, 0)
+  const queued = loaded.reduce((sum, model) => sum + model.waitingRequests, 0)
+  const speed = loaded.reduce((sum, model) => sum + speedOf(model), 0)
   return (
     <Stack gap="md">
-      <Row gap="sm" wrap>
-        <Text size="xs" tone="success">
-          Green under 40%
-        </Text>
-        <Text size="xs" tone="accent">
-          Blue under 65%
-        </Text>
-        <Text size="xs" tone="warning">
-          Orange under 85%
-        </Text>
-        <Text size="xs" tone="danger">
-          Red from 85%
-        </Text>
-      </Row>
-      <Meter
-        label="Model memory"
-        value={percent(current?.memoryUsedBytes ?? 0, current?.memoryMaxBytes ?? 0)}
-        detail={`${current?.memoryUsedLabel ?? '—'} of ${current?.memoryMaxLabel ?? '—'}`}
-      />
+      <Box border radius="md" padding="sm" gap="sm" background="card">
+        <Row justify="between" align="end">
+          <Stack gap="none">
+            <Text size="xs" muted>
+              Memory
+            </Text>
+            <Text size="md" weight="semibold" tone={chartTone(memoryNow)}>
+              {memoryNow}%
+            </Text>
+          </Stack>
+          <Text size="xs" muted>
+            {current?.memoryUsedLabel ?? '—'} of {current?.memoryMaxLabel ?? '—'}
+          </Text>
+        </Row>
+        <UsageBar value={memoryNow} />
+        <Row gap="sm" wrap>
+          <Text size="xs" tone="success">
+            under 40%
+          </Text>
+          <Text size="xs" tone="accent">
+            under 65%
+          </Text>
+          <Text size="xs" tone="warning">
+            under 85%
+          </Text>
+          <Text size="xs" tone="danger">
+            85% and up
+          </Text>
+        </Row>
+        {latest && oldest ? (
+          <Stack gap="xs">
+            <Box direction="row" width="100%" height={28} radius="sm" background="muted" align="end">
+              {trail.map((sample) => (
+                <Box
+                  key={String(sample.at)}
+                  grow
+                  height={trailHeight(sample.memoryPercent)}
+                  background={chartTone(sample.memoryPercent)}
+                />
+              ))}
+            </Box>
+            <Row justify="between" align="center">
+              <RelativeTime at={oldest.at} format="short" muted />
+              <Text size="xs" muted>
+                {latest.loaded} loaded · {latest.active} active
+              </Text>
+              <RelativeTime at={latest.at} format="short" muted />
+            </Row>
+          </Stack>
+        ) : (
+          <Text size="xs" muted>
+            The memory history fills in on the next poll.
+          </Text>
+        )}
+      </Box>
+      <Grid minItemWidth="xs" gap="sm">
+        <Stat label="Loaded" value={total === 0 ? '—' : String(resident)} detail={total === 0 ? 'No inventory' : `of ${total}`} />
+        <Stat label="Requests" value={String(active)} detail={queued > 0 ? `${queued} waiting` : 'None waiting'} tone={active > 0 ? 'accent' : undefined} />
+        <Stat label="Speed" value={speed > 0 ? speed.toFixed(1) : '—'} detail="tok/s" />
+      </Grid>
+      <Stack gap="xs">
+        <Text weight="medium">In memory</Text>
+        {loaded.length === 0 ? (
+          <Text size="sm" muted>
+            Nothing is loaded.
+          </Text>
+        ) : (
+          loaded.map((model) => (
+            <ModelChart key={model.id} model={model} largest={largest} compare={loaded.length > 1} />
+          ))
+        )}
+      </Stack>
       {total === 0 ? (
-        <EmptyState title="No model inventory yet" description="Sizes and request bars appear after oMLX returns its model list." icon="bar-chart-3" />
+        <EmptyState title="No model inventory yet" description="The mix of loaded and waiting models appears after oMLX returns its model list." icon="bar-chart-3" />
       ) : (
-        <Stack gap="xs">
-          <Text weight="medium">Discovered models</Text>
-          <Meter label="Loaded" value={percent(resident, total)} detail={`${resident} of ${total}`} />
-          <Meter label="Loading" value={percent(loading, total)} detail={String(loading)} />
-          <Meter label="Not loaded" value={percent(waiting, total)} detail={String(waiting)} />
-        </Stack>
-      )}
-      {loaded.length > 0 ? (
-        <Stack gap="xs">
-          <Text weight="medium">Loaded size</Text>
-          {loaded.map((model) => (
-            <Meter key={model.id} label={model.id} value={percent(model.sizeBytes, largest)} detail={model.sizeLabel} />
-          ))}
-        </Stack>
-      ) : null}
-      {loaded.length > 0 ? (
-        <Stack gap="xs">
-          <Text weight="medium">Live requests</Text>
-          {loaded.map((model) => (
-            <Meter
-              key={`${model.id}-requests`}
-              label={model.id}
-              value={busiest > 0 ? percent(model.activeRequests + model.waitingRequests, busiest) : 0}
-              detail={`${model.activeRequests} active · ${model.waitingRequests} waiting`}
-            />
-          ))}
-        </Stack>
-      ) : null}
-      {fastest > 0 ? (
-        <Stack gap="xs">
-          <Text weight="medium">Generation speed</Text>
-          {loaded.map((model) => {
-            const speed = speedOf(model)
-            return speed > 0 ? (
-              <Meter key={`${model.id}-speed`} label={model.id} value={percent(speed, fastest)} detail={`${speed.toFixed(1)} tok/s`} />
-            ) : null
-          })}
-        </Stack>
-      ) : null}
-      {prefills.length > 0 ? (
-        <Stack gap="xs">
-          <Text weight="medium">Prefill progress</Text>
-          {prefills.map((item) => (
-            <Meter key={item.key} label={item.label} value={item.value} detail={item.detail} />
-          ))}
-        </Stack>
-      ) : null}
-      {recent.length > 0 ? (
-        <Stack gap="xs">
-          <Text weight="medium">Memory over recent polls</Text>
-          {recent.map((sample) => (
-            <Stack key={String(sample.at)} gap="xs">
-              <Row justify="between" align="center">
-                <RelativeTime at={sample.at} format="short" muted />
-                <Row gap="xs" align="center">
-                  <Text size="sm" weight="medium" tone={chartTone(sample.memoryPercent)}>
-                    {sample.memoryPercent}%
-                  </Text>
-                  <Text size="sm" muted>
-                    {sample.loaded} loaded · {sample.active} active
-                  </Text>
-                </Row>
-              </Row>
-              <UsageBar value={sample.memoryPercent} />
-            </Stack>
-          ))}
-        </Stack>
-      ) : (
-        <Text muted>The memory history fills in on the next poll.</Text>
+        <Box border radius="md" padding="sm" gap="xs">
+          <Row justify="between" align="center">
+            <Text weight="medium">Catalog</Text>
+            <Text size="xs" muted>
+              {total} models
+            </Text>
+          </Row>
+          <Box direction="row" width="100%" height={12} radius="full" background="muted" align="stretch">
+            {resident > 0 ? <Box width={loadedShare} height={12} background="success" shrink={false} /> : null}
+            {loadingCount > 0 ? <Box width={loadingShare} height={12} background="accent" shrink={false} /> : null}
+          </Box>
+          <Row gap="sm" wrap>
+            <Text size="xs" tone="success">
+              {resident} loaded
+            </Text>
+            <Text size="xs" tone="accent">
+              {loadingCount} loading
+            </Text>
+            <Text size="xs" muted>
+              {waiting} not loaded
+            </Text>
+          </Row>
+        </Box>
       )}
     </Stack>
   )
 }
 
-function Meter(props: { label: string; value: number; detail: string }) {
+function Stat(props: { label: string; value: string; detail: string; tone?: Tone }) {
   return (
-    <Stack gap="xs">
-      <Row justify="between" align="center">
-        <Text size="sm">{props.label}</Text>
-        <Row gap="xs" align="center">
-          <Text size="sm" weight="medium" tone={chartTone(props.value)}>
-            {props.value}%
-          </Text>
-          <Text size="sm" muted>
-            {props.detail}
-          </Text>
-        </Row>
+    <Box border radius="md" padding="sm" gap="none" background="card" grow>
+      <Text size="xs" muted>
+        {props.label}
+      </Text>
+      <Text size="md" weight="semibold" tone={props.tone}>
+        {props.value}
+      </Text>
+      <Text size="xs" muted>
+        {props.detail}
+      </Text>
+    </Box>
+  )
+}
+
+function ModelChart(props: { model: ActivityModel; largest: number; compare: boolean }) {
+  const model = props.model
+  const speed = speedOf(model)
+  const requests = model.requests.filter((request) => request.progress != null)
+  return (
+    <Box border radius="md" padding="sm" gap="xs">
+      <Text weight="medium" truncate>
+        {model.id}
+      </Text>
+      <Row gap="sm" wrap>
+        <Text size="xs" muted>
+          {model.sizeLabel}
+        </Text>
+        <Text size="xs" muted>
+          {model.activeRequests} active · {model.waitingRequests} waiting
+        </Text>
+        <Text size="xs" muted>
+          {speed > 0 ? `${speed.toFixed(1)} tok/s` : 'Idle'}
+        </Text>
       </Row>
-      <UsageBar value={props.value} />
-    </Stack>
+      {props.compare ? <Progress label={`${model.id} size`} labelHidden value={percent(model.sizeBytes, props.largest)} /> : null}
+      {requests.map((request) => (
+        <Stack key={request.id} gap="xs">
+          <Row justify="between" align="center">
+            <Text size="xs">{request.phase}</Text>
+            <Text size="xs" muted>
+              {request.progress}% · {request.detail}
+            </Text>
+          </Row>
+          <Progress label={`${model.id} ${request.phase}`} labelHidden value={request.progress ?? 0} />
+        </Stack>
+      ))}
+    </Box>
   )
 }
 
 function UsageBar(props: { value: number }) {
   return (
-    <Box direction="row" width="100%" height={8} radius="full" background="muted" align="stretch">
-      <Box width={barWidth(props.value)} height={8} radius="full" background={chartTone(props.value)} shrink={false} />
+    <Box direction="row" width="100%" height={12} radius="full" background="muted" align="stretch">
+      {props.value > 0 ? (
+        <Box width={barWidth(props.value)} height={12} radius="full" background={chartTone(props.value)} shrink={false} />
+      ) : null}
     </Box>
   )
 }
@@ -498,9 +537,29 @@ function chartTone(value: number): Tone {
   return 'success'
 }
 
+function trailHeight(value: number): number {
+  return Math.max(4, Math.round((Math.max(0, Math.min(100, value)) / 100) * 28))
+}
+
 function barWidth(value: number): `${number}%` {
   const clamped = Math.max(0, Math.min(100, Math.round(value)))
   return `${clamped}%` as `${number}%`
+}
+
+function shareWidths(counts: number[]): `${number}%`[] {
+  const total = counts.reduce((sum, count) => sum + count, 0)
+  if (total <= 0) return counts.map(() => '0%' as `${number}%`)
+  const widths = counts.map((count) => Math.floor((count / total) * 100))
+  let leftover = 100 - widths.reduce((sum, width) => sum + width, 0)
+  const rank = counts
+    .map((count, index) => ({ index, frac: (count / total) * 100 - widths[index] }))
+    .sort((a, b) => b.frac - a.frac)
+  for (const item of rank) {
+    if (leftover <= 0) break
+    widths[item.index] += 1
+    leftover -= 1
+  }
+  return widths.map((width) => `${width}%` as `${number}%`)
 }
 
 function SettingsTab() {
