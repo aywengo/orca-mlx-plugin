@@ -397,9 +397,9 @@ function ChartsTab() {
         {latest && oldest ? (
           <Stack gap="xs">
             <Box direction="row" width="100%" height={28} radius="sm" background="muted" align="end">
-              {trail.map((sample) => (
+              {trail.map((sample, index) => (
                 <Box
-                  key={String(sample.at)}
+                  key={`${index}-${sample.at}`}
                   grow
                   height={trailHeight(sample.memoryPercent)}
                   background={chartTone(sample.memoryPercent)}
@@ -949,16 +949,14 @@ function recordUsage(current: Activity, catalog: ModelSummary[]): void {
   }
   update(history, (list) => {
     const last = list[list.length - 1]
-    if (
-      last &&
-      sample.at - last.at < 2000 &&
+    const sameReading =
+      last !== undefined &&
       last.memoryPercent === sample.memoryPercent &&
       last.active === sample.active &&
       last.loaded === sample.loaded
-    ) {
-      return list
-    }
-    return [...list, sample].slice(-24)
+    if (last && sameReading && sample.at - last.at < 2000) return list
+    const at = last && sample.at <= last.at ? last.at + 1 : sample.at
+    return [...list, { ...sample, at }].slice(-24)
   })
 }
 
