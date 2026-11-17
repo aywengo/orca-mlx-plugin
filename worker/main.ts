@@ -342,7 +342,7 @@ async function paint(orca: OrcaWorkerApi, overview: Overview): Promise<void> {
     await orca.host.call('statusBar.update', {
       id: 'loads',
       text,
-      icon: 'database',
+      icon: 'bot',
       tone: overview.status === 'ok' ? (overview.loadedCount > 0 ? 'success' : 'neutral') : 'warning',
       tooltip: overview.message,
       visible: true

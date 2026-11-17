@@ -1,5 +1,6 @@
 import {
   Badge,
+  Box,
   Button,
   Callout,
   CodeView,
@@ -9,7 +10,6 @@ import {
   Heading,
   IconButton,
   Input,
-  Progress,
   RelativeTime,
   Row,
   Select,
@@ -27,7 +27,8 @@ import {
   read,
   set,
   update,
-  type PanelContext
+  type PanelContext,
+  type Tone
 } from 'orca'
 import { assertApiKey, draftFromSettings, draftToPatch, normalizeBaseUrl, OmlxError } from './client.ts'
 import './protocol.ts'
@@ -367,6 +368,20 @@ function ChartsTab() {
   const recent = [...samples].reverse().slice(0, 8)
   return (
     <Stack gap="md">
+      <Row gap="sm" wrap>
+        <Text size="xs" tone="success">
+          Green under 40%
+        </Text>
+        <Text size="xs" tone="accent">
+          Blue under 65%
+        </Text>
+        <Text size="xs" tone="warning">
+          Orange under 85%
+        </Text>
+        <Text size="xs" tone="danger">
+          Red from 85%
+        </Text>
+      </Row>
       <Meter
         label="Model memory"
         value={percent(current?.memoryUsedBytes ?? 0, current?.memoryMaxBytes ?? 0)}
@@ -429,11 +444,16 @@ function ChartsTab() {
             <Stack key={String(sample.at)} gap="xs">
               <Row justify="between" align="center">
                 <RelativeTime at={sample.at} format="short" muted />
-                <Text size="sm" muted>
-                  {sample.loaded} loaded · {sample.active} active
-                </Text>
+                <Row gap="xs" align="center">
+                  <Text size="sm" weight="medium" tone={chartTone(sample.memoryPercent)}>
+                    {sample.memoryPercent}%
+                  </Text>
+                  <Text size="sm" muted>
+                    {sample.loaded} loaded · {sample.active} active
+                  </Text>
+                </Row>
               </Row>
-              <Progress label={`Memory at ${sample.at}`} labelHidden value={sample.memoryPercent} />
+              <UsageBar value={sample.memoryPercent} />
             </Stack>
           ))}
         </Stack>
@@ -449,13 +469,38 @@ function Meter(props: { label: string; value: number; detail: string }) {
     <Stack gap="xs">
       <Row justify="between" align="center">
         <Text size="sm">{props.label}</Text>
-        <Text size="sm" muted>
-          {props.detail}
-        </Text>
+        <Row gap="xs" align="center">
+          <Text size="sm" weight="medium" tone={chartTone(props.value)}>
+            {props.value}%
+          </Text>
+          <Text size="sm" muted>
+            {props.detail}
+          </Text>
+        </Row>
       </Row>
-      <Progress label={props.label} labelHidden value={props.value} />
+      <UsageBar value={props.value} />
     </Stack>
   )
+}
+
+function UsageBar(props: { value: number }) {
+  return (
+    <Box direction="row" width="100%" height={8} radius="full" background="muted" align="stretch">
+      <Box width={barWidth(props.value)} height={8} radius="full" background={chartTone(props.value)} shrink={false} />
+    </Box>
+  )
+}
+
+function chartTone(value: number): Tone {
+  if (value >= 85) return 'danger'
+  if (value >= 65) return 'warning'
+  if (value >= 40) return 'accent'
+  return 'success'
+}
+
+function barWidth(value: number): `${number}%` {
+  const clamped = Math.max(0, Math.min(100, Math.round(value)))
+  return `${clamped}%` as `${number}%`
 }
 
 function SettingsTab() {
