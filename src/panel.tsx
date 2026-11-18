@@ -127,8 +127,8 @@ export default function Panel() {
         <Tab value="running" label="Running">
           <RunningTab />
         </Tab>
-        <Tab value="charts" label="Charts">
-          <ChartsTab />
+        <Tab value="pulses" label="Pulses">
+          <PulsesTab />
         </Tab>
         <Tab value="settings" label="Settings">
           <SettingsTab />
@@ -345,7 +345,7 @@ function RunningTab() {
   )
 }
 
-function ChartsTab() {
+function PulsesTab() {
   const current = read(activity)
   const catalog = read(models)
   const samples = read(history)
