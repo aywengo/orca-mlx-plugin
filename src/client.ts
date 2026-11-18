@@ -1,4 +1,6 @@
 import type {
+  AcceleratorCandidate,
+  AcceleratorStatus,
   Activity,
   ActivityModel,
   ActivityRequest,
@@ -38,6 +40,8 @@ export interface OmlxClient {
     modelId: string,
     flags: { is_pinned?: boolean; is_default?: boolean }
   ): Promise<{ message: string }>
+  acceleratorCandidates(modelId: string): Promise<AcceleratorCandidate[]>
+  setAccelerator(modelId: string, nodeId: string | null, layers: number | null): Promise<{ message: string }>
   rescan(timeoutMs?: number): Promise<{ message: string }>
   abort(modelId: string, requestId: string): Promise<{ message: string }>
   activity(): Promise<Activity>
@@ -131,7 +135,7 @@ export function draftToPatch(draft: SettingsDraft): SettingsPatch {
     modelFallback: draft.modelFallback,
     maxConcurrentRequests: integerField(draft.maxConcurrentRequests, 1, 1024, 'Max concurrent requests'),
     chunkedPrefill: draft.chunkedPrefill,
-    prefillPriority: oneOf(draft.prefillPriority, ['context', 'speed'], 'Prefill priority'),
+    prefillPriority: oneOf(draft.prefillPriority, ['context', 'speed'], 'Long prompt handling'),
     concurrentPriority: oneOf(draft.concurrentPriority, ['prefill', 'balanced', 'decode'], 'Concurrency priority'),
     memoryGuardTier: tier,
     memoryGuardCustomCeilingGb:
@@ -172,7 +176,7 @@ export function settingsPatchToBody(patch: SettingsPatch): Record<string, unknow
   }
   if (patch.chunkedPrefill !== undefined) body.chunked_prefill = patch.chunkedPrefill
   if (patch.prefillPriority !== undefined) {
-    body.prefill_priority = oneOf(patch.prefillPriority, ['context', 'speed'], 'Prefill priority')
+    body.prefill_priority = oneOf(patch.prefillPriority, ['context', 'speed'], 'Long prompt handling')
   }
   if (patch.concurrentPriority !== undefined) {
     body.concurrent_priority = oneOf(
@@ -218,6 +222,42 @@ export function settingsPatchToBody(patch: SettingsPatch): Record<string, unknow
   return body
 }
 
+export function acceleratorBody(nodeId: string | null, layers: number | null): { prefill_helper_node_id: string | null; prefill_helper_layers: number | null } {
+  if (nodeId !== null) {
+    const id = nodeId.trim()
+    if (!id || id.length > 128 || /[\s/\\]/.test(id)) {
+      throw new OmlxError('invalid_params', 'Choose a paired helper.')
+    }
+    nodeId = id
+  }
+  if (nodeId === null) layers = null
+  else if (layers !== null && (!Number.isInteger(layers) || layers < 1 || layers > 512)) {
+    throw new OmlxError('invalid_params', 'Helper layers must be from 1 to 512, or blank for Auto.')
+  }
+  return { prefill_helper_node_id: nodeId, prefill_helper_layers: layers }
+}
+
+export function candidatesFromResponse(body: unknown): AcceleratorCandidate[] {
+  const root = asRecord(body)
+  const devices = root && Array.isArray(root.devices) ? root.devices : null
+  if (!devices) throw new OmlxError('bad_response', 'oMLX returned an unexpected helper list.')
+  const helpers: AcceleratorCandidate[] = []
+  for (const entry of devices) {
+    const record = asRecord(entry)
+    if (!record || typeof record.node_id !== 'string' || !record.node_id) continue
+    helpers.push({
+      nodeId: record.node_id,
+      name: typeof record.name === 'string' && record.name ? record.name : record.node_id,
+      online: record.online === true,
+      layersFit: typeof record.layers_fit === 'number' ? record.layers_fit : null,
+      reason: typeof record.reason === 'string' && record.reason ? record.reason : null,
+      link: typeof record.link === 'string' && record.link ? record.link : null,
+      versionOk: typeof record.version_ok === 'boolean' ? record.version_ok : null
+    })
+  }
+  return helpers
+}
+
 export function modelsFromResponse(body: unknown): ModelSummary[] {
   const list = arrayField(body, 'models', 'model list')
   const models: ModelSummary[] = []
@@ -237,7 +277,8 @@ export function modelsFromResponse(body: unknown): ModelSummary[] {
       engineType: typeof record.engine_type === 'string' ? record.engine_type : 'batched',
       modelType: typeof record.model_type === 'string' ? record.model_type : 'llm',
       sizeLabel: typeof record.estimated_size_formatted === 'string' ? record.estimated_size_formatted : '—',
-      sizeBytes: bytesOf(record)
+      sizeBytes: bytesOf(record),
+      ...acceleratorFields(record)
     })
   }
   return models
@@ -408,6 +449,15 @@ export function createClient(connection: Connection, timeoutMs = 10_000): OmlxCl
       const parsed = asRecord(await send('PUT', modelPath(modelId, 'settings'), flags))
       return { message: typeof parsed?.message === 'string' ? parsed.message : 'Updated model settings.' }
     },
+    async acceleratorCandidates(modelId) {
+      const query = new URLSearchParams({ model_id: modelId })
+      return candidatesFromResponse(await send('GET', `/admin/api/prefill-helper/candidates?${query}`))
+    },
+    async setAccelerator(modelId, nodeId, layers) {
+      const parsed = asRecord(await send('PUT', modelPath(modelId, 'settings'), acceleratorBody(nodeId, layers)))
+      const name = nodeId ? 'Prefill accelerator saved.' : 'Prefill accelerator turned off.'
+      return { message: typeof parsed?.message === 'string' ? parsed.message : name }
+    },
     async rescan(timeout = 120_000) {
       const parsed = asRecord(await send('POST', '/admin/api/reload', undefined, timeout))
       return { message: typeof parsed?.message === 'string' ? parsed.message : 'Rescanned model directories.' }
@@ -459,6 +509,38 @@ export function createClient(connection: Connection, timeoutMs = 10_000): OmlxCl
         totalLines: typeof parsed?.total_lines === 'number' ? parsed.total_lines : tail.split('\n').length
       }
     }
+  }
+}
+
+function acceleratorFields(record: Record<string, unknown>): Pick<
+  ModelSummary,
+  'acceleratorSupported' | 'accelerator' | 'acceleratorNodeId' | 'acceleratorLayers'
+> {
+  const settings = asRecord(record.settings)
+  const nodeId =
+    settings && typeof settings.prefill_helper_node_id === 'string' && settings.prefill_helper_node_id
+      ? settings.prefill_helper_node_id
+      : null
+  const layers = settings?.prefill_helper_layers
+  return {
+    acceleratorSupported: record.prefill_helper_supported === true,
+    accelerator: acceleratorStatus(record.prefill_helper),
+    acceleratorNodeId: nodeId,
+    acceleratorLayers: typeof layers === 'number' && layers > 0 ? layers : null
+  }
+}
+
+function acceleratorStatus(value: unknown): AcceleratorStatus | null {
+  const record = asRecord(value)
+  if (!record || typeof record.state !== 'string' || !record.state) return null
+  return {
+    state: record.state,
+    name: typeof record.name === 'string' && record.name ? record.name : null,
+    nodeId: typeof record.node_id === 'string' && record.node_id ? record.node_id : null,
+    layers: typeof record.layers === 'number' ? record.layers : null,
+    held: typeof record.held === 'number' ? record.held : null,
+    reason: typeof record.reason === 'string' && record.reason ? record.reason : null,
+    link: typeof record.link === 'string' && record.link ? record.link : null
   }
 }
 
@@ -563,7 +645,7 @@ function pushRows(
 function requestDetail(record: Record<string, unknown>, phase: ActivityRequest['phase'], fallback: string): string {
   if (phase === 'waiting' && typeof record.queue_position === 'number') return `Queued #${record.queue_position}`
   if (phase === 'prefilling' && typeof record.processed === 'number' && typeof record.total === 'number') {
-    return `Prefill ${record.processed}/${record.total}`
+    return `Prefill ${record.processed}/${record.total}${helperSuffix(record)}`
   }
   if (phase === 'generating' && typeof record.tokens_per_second === 'number') {
     const speed = record.tokens_per_second.toFixed(1)
@@ -574,6 +656,20 @@ function requestDetail(record: Record<string, unknown>, phase: ActivityRequest['
     if (typeof record[key] === 'string' && record[key]) return record[key]
   }
   return fallback
+}
+
+function helperSuffix(record: Record<string, unknown>): string {
+  const nested = asRecord(record.prefill_helper)
+  const name =
+    textField(record.helper) ||
+    textField(record.helper_name) ||
+    textField(record.via) ||
+    (nested ? textField(nested.name) : '')
+  return name ? ` via ${name}` : ''
+}
+
+function textField(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
 }
 
 function bytesOf(record: Record<string, unknown>): number {

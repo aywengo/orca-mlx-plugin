@@ -12,11 +12,12 @@ The panel cannot open network connections. A trusted worker calls the oMLX admin
 - Load, unload, pin, and mark a default model. Rescan the model directories.
 - Watch models that are loaded, including waiting, prefill, and generation, and abort one request.
 - Edit host, port, log level, model directories, scheduler, memory guard, cache sizes, sampling defaults, and the idle timeout.
+- Choose a paired Prefill Accelerator helper for a supported model, or leave the layer split on Auto.
 - Replace the server’s main API key, then store the new key in this plugin.
 - Restart oMLX when it is supervised by the macOS app or `brew services`.
 - Read the tail of the server log.
 
-Downloads, quantization, benchmarks, and per-model acceleration settings are not in this version.
+Downloads, quantization, and benchmarks are not in this version. Pairing a helper stays in oMLX’s Cluster tab.
 
 ## Requirements
 

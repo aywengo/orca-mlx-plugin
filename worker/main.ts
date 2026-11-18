@@ -73,6 +73,19 @@ export default function activate(orca: OrcaWorkerApi): void {
       return result
     })
   )
+  orca.panels.handle('omlx.acceleratorCandidates', ({ modelId }) =>
+    rpc(async () => (await clientOrThrow(orca)).acceleratorCandidates(requireId(modelId)))
+  )
+  orca.panels.handle('omlx.accelerator', ({ modelId, nodeId, layers }) =>
+    rpc(async () => {
+      const client = await clientOrThrow(orca)
+      const id = typeof nodeId === 'string' && nodeId.trim() ? nodeId : null
+      const count = typeof layers === 'number' ? layers : null
+      const result = await client.setAccelerator(requireId(modelId), id, count)
+      void enqueue(() => tick(orca))
+      return result
+    })
+  )
   orca.panels.handle('omlx.abort', ({ modelId, requestId }) =>
     rpc(async () => {
       if (typeof requestId !== 'string' || !requestId) {

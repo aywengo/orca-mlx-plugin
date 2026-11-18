@@ -3,10 +3,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { once } from 'node:events'
 import test from 'node:test'
 import {
+  acceleratorBody,
   assertApiKey,
   baseSettingsFromResponse,
+  candidatesFromResponse,
   createClient,
   draftToPatch,
+  modelsFromResponse,
   normalizeBaseUrl,
   OmlxError,
   settingsPatchToBody
@@ -75,6 +78,32 @@ test('settings mapping drops credentials and builds a flat update', () => {
   assert.equal(settingsPatchToBody({ ssdCacheMaxSize: 'AUTO' }).ssd_cache_max_size, 'auto')
 })
 
+test('prefill accelerator settings parse and turn off with null', () => {
+  const [model] = modelsFromResponse({
+    models: [
+      {
+        id: 'glm',
+        prefill_helper_supported: true,
+        prefill_helper: { state: 'ready', name: 'spark-1', layers: 12, link: '2.5 GbE' },
+        settings: { prefill_helper_node_id: 'node-1', prefill_helper_layers: 12 }
+      }
+    ]
+  })
+  assert.equal(model?.acceleratorSupported, true)
+  assert.equal(model?.accelerator?.state, 'ready')
+  assert.equal(model?.accelerator?.name, 'spark-1')
+  assert.equal(model?.acceleratorNodeId, 'node-1')
+  assert.equal(model?.acceleratorLayers, 12)
+  assert.deepEqual(acceleratorBody('node-1', null), { prefill_helper_node_id: 'node-1', prefill_helper_layers: null })
+  assert.deepEqual(acceleratorBody(null, 4), { prefill_helper_node_id: null, prefill_helper_layers: null })
+  const helpers = candidatesFromResponse({
+    version: '0.8.0',
+    devices: [{ node_id: 'node-1', name: 'spark-1', online: true, layers_fit: 21, version_ok: true, link: 'ethernet' }]
+  })
+  assert.equal(helpers[0]?.layersFit, 21)
+  assert.throws(() => acceleratorBody('bad id', 1), (error: unknown) => error instanceof OmlxError)
+})
+
 test('blank idle timeout disables it and a custom memory tier needs a ceiling', () => {
   const draft = draftFromSettings(sampleSettings())
   draft.idleTimeoutSeconds = ''
@@ -128,7 +157,7 @@ test('admin client sends the bearer key, encodes model ids, and redacts settings
               idle_seconds: 0,
               request_abort: true,
               waiting: [{ request_id: 'wait-1', queue_position: 1 }],
-              prefilling: [{ request_id: 'prefill-1', processed: 10, total: 40 }],
+              prefilling: [{ request_id: 'prefill-1', processed: 10, total: 40, helper_name: 'spark-1' }],
               generating: [{ request_id: 'gen-1', generated_tokens: 12, tokens_per_second: 30.5 }],
               api_key: SECRET
             }
@@ -160,6 +189,7 @@ test('admin client sends the bearer key, encodes model ids, and redacts settings
     assert.equal(activity.models[0]?.sizeBytes, 4_200_000_000)
     assert.equal(activity.models[0]?.requests.find((request) => request.id === 'gen-1')?.tokensPerSecond, 30.5)
     assert.equal(activity.models[0]?.requests.find((request) => request.id === 'prefill-1')?.progress, 25)
+    assert.equal(activity.models[0]?.requests.find((request) => request.id === 'prefill-1')?.detail, 'Prefill 10/40 via spark-1')
     assert.equal(activity.memoryUsedBytes, 1024)
     assert.equal(activity.memoryMaxBytes, 2048)
     assert.equal(activity.memoryUsedLabel, '1 KB')

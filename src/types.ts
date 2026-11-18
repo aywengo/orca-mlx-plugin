@@ -27,6 +27,26 @@ export interface RpcFailure {
 
 export type Rpc<T> = RpcSuccess<T> | RpcFailure
 
+export interface AcceleratorStatus {
+  state: string
+  name: string | null
+  nodeId: string | null
+  layers: number | null
+  held: number | null
+  reason: string | null
+  link: string | null
+}
+
+export interface AcceleratorCandidate {
+  nodeId: string
+  name: string
+  online: boolean
+  layersFit: number | null
+  reason: string | null
+  link: string | null
+  versionOk: boolean | null
+}
+
 export interface ModelSummary {
   id: string
   displayName: string
@@ -41,6 +61,10 @@ export interface ModelSummary {
   modelType: string
   sizeLabel: string
   sizeBytes: number
+  acceleratorSupported: boolean
+  accelerator: AcceleratorStatus | null
+  acceleratorNodeId: string | null
+  acceleratorLayers: number | null
 }
 
 export interface ActivityRequest {

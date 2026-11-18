@@ -34,7 +34,16 @@ import {
 } from 'orca'
 import { assertApiKey, draftFromSettings, draftToPatch, normalizeBaseUrl, OmlxError } from './client.ts'
 import './protocol.ts'
-import type { Activity, ActivityModel, BaseSettings, JobEvent, ModelSummary, Overview, SettingsDraft } from './types.ts'
+import type {
+  AcceleratorCandidate,
+  Activity,
+  ActivityModel,
+  BaseSettings,
+  JobEvent,
+  ModelSummary,
+  Overview,
+  SettingsDraft
+} from './types.ts'
 
 interface UsageSample {
   at: number
@@ -69,6 +78,10 @@ const logs = atom('')
 const logMeta = atom('')
 const logsError = atom<string | null>(null)
 const logsLoading = atom(false)
+const helperChoice = atom('helperChoice', '')
+const layersDraft = atom('layersDraft', '')
+const helpers = atom<AcceleratorCandidate[] | null>('helpers', null)
+const helpersError = atom<string | null>('helpersError', null)
 
 export function setup(ctx: PanelContext): void {
   ctx.subscriptions.push(
@@ -233,7 +246,7 @@ function ModelsTab() {
           }))}
           selectionMode="single"
           selected={selected ? [selected] : []}
-          onSelectionChange={({ keys }) => set(selectedModel, keys[0] ?? null)}
+          onSelectionChange={({ keys }) => chooseModel(keys[0] ?? null)}
           emptyText="No models on this server"
         />
       )}
@@ -260,15 +273,58 @@ function ModelsTab() {
         </Button>
       </Row>
       {model ? (
-        <Text muted>
-          {model.modelType} · {model.engineType}
-          {model.helper ? ' · helper' : ''}
-          {model.hidden ? ' · hidden' : ''}
-          {model.virtual ? ' · built in' : ''}
-        </Text>
+        <Stack gap="sm">
+          <Text muted>
+            {model.modelType} · {model.engineType}
+            {model.helper ? ' · helper' : ''}
+            {model.hidden ? ' · hidden' : ''}
+            {model.virtual ? ' · built in' : ''}
+          </Text>
+          {model.acceleratorSupported || model.acceleratorNodeId ? <AcceleratorCard model={model} /> : null}
+        </Stack>
       ) : (
         <Text muted>Select a model to load, unload, pin, or make it the default.</Text>
       )}
+    </Stack>
+  )
+}
+
+function AcceleratorCard(props: { model: ModelSummary }) {
+  const model = props.model
+  const list = read(helpers)
+  const choice = read(helperChoice)
+  const options = helperOptions(model, list)
+  const current = options.some((option) => option.value === choice) ? choice : ''
+  return (
+    <Stack gap="xs">
+      <Text weight="medium">Prefill accelerator</Text>
+      <Text size="sm" muted>
+        {acceleratorLine(model)}
+      </Text>
+      <Select label="Helper" value={current} options={options} onChange={(value) => set(helperChoice, value)} />
+      {current ? (
+        <Input
+          label="Layers on the helper"
+          value={read(layersDraft)}
+          placeholder="Auto"
+          onChange={(value) => set(layersDraft, value)}
+        />
+      ) : null}
+      <Row gap="sm" wrap>
+        <Button icon="check" onPress={() => void saveAccelerator(model.id)}>
+          Save accelerator
+        </Button>
+        <Button variant="ghost" onPress={() => void loadHelpers(model.id)}>
+          Refresh helpers
+        </Button>
+      </Row>
+      {list === null && !read(helpersError) ? <Text size="xs" muted>Checking paired helpers…</Text> : null}
+      {read(helpersError) ? <Text size="xs" muted>{read(helpersError)}</Text> : null}
+      {list && list.length === 0 && !read(helpersError) ? (
+        <Text size="xs" muted>
+          Pair a helper in oMLX’s Cluster tab, then refresh.
+        </Text>
+      ) : null}
     </Stack>
   )
 }
@@ -322,7 +378,7 @@ function RunningTab() {
           ]}
           rows={model.requests.map((request) => ({
             key: request.id,
-            cells: { phase: request.phase, detail: `${request.id} · ${request.detail}` }
+            cells: { phase: request.phase, detail: `${request.id} · ${withHelper(model.id, request.phase, request.detail)}` }
           }))}
           selectionMode="single"
           selected={requestId ? [requestId] : []}
@@ -510,7 +566,7 @@ function ModelChart(props: { model: ActivityModel; largest: number; compare: boo
           <Row justify="between" align="center">
             <Text size="xs">{request.phase}</Text>
             <Text size="xs" muted>
-              {request.progress}% · {request.detail}
+              {request.progress}% · {withHelper(model.id, request.phase, request.detail)}
             </Text>
           </Row>
           <Progress label={`${model.id} ${request.phase}`} labelHidden value={request.progress ?? 0} />
@@ -622,7 +678,7 @@ function SettingsTab() {
             onChange={(maxConcurrentRequests) => edit({ maxConcurrentRequests })}
           />
           <Switch label="Chunked prefill" checked={draft.chunkedPrefill} onChange={(chunkedPrefill) => edit({ chunkedPrefill })} />
-          <Choice label="Prefill priority" value={draft.prefillPriority} values={['context', 'speed']} onChange={(prefillPriority) => edit({ prefillPriority })} />
+          <Choice label="Long prompt handling" value={draft.prefillPriority} values={['context', 'speed']} onChange={(prefillPriority) => edit({ prefillPriority })} />
           <Choice
             label="Concurrency priority"
             value={draft.concurrentPriority}
@@ -838,6 +894,54 @@ async function rotateKey(): Promise<void> {
   }
 }
 
+function chooseModel(id: string | null): void {
+  set(selectedModel, id)
+  const model = id ? read(models).find((item) => item.id === id) ?? null : null
+  set(helperChoice, model?.acceleratorNodeId ?? '')
+  set(layersDraft, model?.acceleratorLayers == null ? '' : String(model.acceleratorLayers))
+  set(helpers, null)
+  set(helpersError, null)
+  if (model?.acceleratorSupported) void loadHelpers(model.id)
+}
+
+async function loadHelpers(modelId: string): Promise<void> {
+  set(helpersError, null)
+  try {
+    const result = await plugin.request('omlx.acceleratorCandidates', { modelId })
+    if (read(selectedModel) !== modelId) return
+    if (!result.ok) {
+      set(helpers, [])
+      set(helpersError, result.message)
+      return
+    }
+    set(helpers, result.data)
+  } catch (error) {
+    if (read(selectedModel) !== modelId) return
+    set(helpers, [])
+    set(helpersError, messageOf(error))
+  }
+}
+
+async function saveAccelerator(modelId: string): Promise<void> {
+  const nodeId = read(helperChoice).trim() || null
+  let layers: number | null = null
+  if (nodeId && read(layersDraft).trim()) {
+    const raw = read(layersDraft).trim()
+    if (!/^\d+$/.test(raw)) {
+      set(notice, 'Helper layers must be a whole number, or blank for Auto.')
+      return
+    }
+    layers = Number(raw)
+  }
+  const result = await plugin.request('omlx.accelerator', { modelId, nodeId, layers })
+  set(notice, result.ok ? result.data.message : result.message)
+  if (result.ok) {
+    await reload()
+    const model = read(models).find((item) => item.id === modelId)
+    set(layersDraft, model?.acceleratorLayers == null ? '' : String(model.acceleratorLayers))
+  }
+}
+
 async function loadSelected(): Promise<void> {
   const model = read(selectedModel)
   if (!model) return
@@ -914,6 +1018,59 @@ function resetDraft(): void {
   if (!current) return
   set(settingsDraft, draftFromSettings(current))
   set(dirty, false)
+}
+
+function helperOptions(model: ModelSummary, list: AcceleratorCandidate[] | null): { value: string; label: string }[] {
+  const options = [{ value: '', label: 'Off' }]
+  const seen = new Set<string>()
+  for (const device of list ?? []) {
+    seen.add(device.nodeId)
+    const fit = device.layersFit == null ? '' : `${device.layersFit} layers`
+    const note = device.online ? fit : device.reason || 'offline'
+    options.push({ value: device.nodeId, label: note ? `${device.name} · ${note}` : device.name })
+  }
+  if (model.acceleratorNodeId && !seen.has(model.acceleratorNodeId)) {
+    options.push({ value: model.acceleratorNodeId, label: model.accelerator?.name || 'Saved helper' })
+  }
+  return options
+}
+
+function acceleratorLine(model: ModelSummary): string {
+  const status = model.accelerator
+  if (!status || status.state === 'off' || status.state === 'unloaded') {
+    if (model.acceleratorNodeId) return 'Saved. It starts when the model loads.'
+    return 'Off. Pair a helper in oMLX, then choose it here.'
+  }
+  const name = status.name ?? 'Helper'
+  const layers = status.layers ?? status.held
+  const layerText = layers == null ? '' : ` · ${layers} layers`
+  const link = status.link ? ` · ${status.link}` : ''
+  const reason = status.reason ? ` · ${status.reason}` : ''
+  return `${acceleratorState(status.state)} · ${name}${layerText}${link}${reason}`
+}
+
+function acceleratorState(state: string): string {
+  const labels: Record<string, string> = {
+    connecting: 'Connecting',
+    needs_files: 'Needs model files',
+    files_missing: 'Files missing',
+    files_ready: 'Files ready',
+    copying: 'Copying',
+    starting: 'Starting',
+    ready: 'Ready',
+    working: 'Helping a prompt',
+    offline: 'Offline',
+    stopped: 'Stopped',
+    error: 'Error'
+  }
+  return labels[state] ?? state
+}
+
+function withHelper(modelId: string, phase: string, detail: string): string {
+  if (phase !== 'prefilling' || detail.includes(' via ')) return detail
+  const status = read(models).find((item) => item.id === modelId)?.accelerator
+  if (!status || status.state !== 'working' || !status.name) return detail
+  return `${detail} via ${status.name}`
 }
 
 function flagsFor(model: ModelSummary): string {
