@@ -4,14 +4,42 @@
   "execution": "trusted-worker",
   "id": "omlx",
   "name": "oMLX",
-  "version": "1.1.5",
-  "description": "Connect to a running oMLX server, load and unload models, see what is in memory, and edit base settings.",
+  "version": "1.1.6",
+  "description": "Manage a local oMLX server from Orca’s sidebar: save the API key in encrypted secrets, load and unload models, watch memory and live requests, edit base settings, and restart the server without leaving your workspace.",
+  "homepage": "https://github.com/aywengo/orca-mlx-plugin",
+  "repository": "https://github.com/aywengo/orca-mlx-plugin",
   "license": "MIT",
   "engines": {
     "orca": ">=1.4.248"
   },
   "pluginApi": 1,
   "icon": "assets/icon.png",
+  "cover": {
+    "path": "assets/cover.png",
+    "alt": "oMLX open in Orca’s sidebar beside the editor, showing memory, loaded models, and generation speed on the Pulses tab"
+  },
+  "screenshots": [
+    {
+      "path": "assets/screenshot-models.png",
+      "alt": "oMLX Models tab listing MLX models with load state and size",
+      "caption": "Browse the model catalog, then load, unload, pin, or set a default"
+    },
+    {
+      "path": "assets/screenshot-pulses.png",
+      "alt": "oMLX Pulses tab with memory meter, request stats, and tokens per second",
+      "caption": "Watch memory, catalog mix, and live tokens per second"
+    },
+    {
+      "path": "assets/screenshot-running.png",
+      "alt": "oMLX Running tab showing a loaded model and an active generation request",
+      "caption": "Inspect loaded models and stop a single request"
+    },
+    {
+      "path": "assets/screenshot-settings.png",
+      "alt": "oMLX Settings tab with host, port, and log level under Server",
+      "caption": "Edit host, port, scheduler, memory guard, and sampling defaults"
+    }
+  ],
   "main": "worker/main.ts",
   "contributes": {
     "panels": [

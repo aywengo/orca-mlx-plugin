@@ -1,8 +1,10 @@
 # oMLX for Orca
 
-An [Orca](https://orca.dev) sidebar plugin for a running [oMLX](https://github.com/jundot/omlx) server. It stores the main API key in Orca’s encrypted secrets, then lists models, loads and unloads them, shows what is currently in memory, and edits the server’s base settings.
+An [Orca](https://orca.dev) sidebar plugin for a running [oMLX](https://github.com/jundot/omlx) server on Apple Silicon. Use it when you serve local MLX models and want to manage them next to your agents: save the main API key in Orca’s encrypted secrets, load and unload models, watch memory and live requests, edit base settings, and restart the server without leaving the workspace.
 
 The panel cannot open network connections. A trusted worker calls the oMLX admin API and the panel talks only to that worker.
+
+Listing page: [orca.dev/plugins/aywengo/orca-mlx-plugin](https://orca.dev/plugins/aywengo/orca-mlx-plugin).
 
 ## What you can do
 
