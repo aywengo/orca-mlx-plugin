@@ -11,10 +11,12 @@ import {
   Heading,
   IconButton,
   Input,
+  Link,
   Progress,
   RelativeTime,
   Row,
   Select,
+  Separator,
   Spinner,
   Stack,
   Switch,
@@ -44,6 +46,9 @@ import type {
   Overview,
   SettingsDraft
 } from './types.ts'
+import { pluginVersion } from './version.ts'
+
+const REPO_URL = 'https://github.com/aywengo/orca-mlx-plugin'
 
 interface UsageSample {
   at: number
@@ -105,7 +110,12 @@ export function setup(ctx: PanelContext): void {
 
 export default function Panel() {
   if (read(phase) === 'loading' && !read(overview)) {
-    return <Spinner label="Connecting to oMLX" />
+    return (
+      <Stack gap="sm">
+        <Spinner label="Connecting to oMLX" />
+        <PanelFooter />
+      </Stack>
+    )
   }
   return (
     <Stack gap="sm">
@@ -150,6 +160,21 @@ export default function Panel() {
           <LogsTab />
         </Tab>
       </Tabs>
+      <PanelFooter />
+    </Stack>
+  )
+}
+
+function PanelFooter() {
+  return (
+    <Stack gap="xs">
+      <Separator />
+      <Row justify="between" align="center">
+        <Link href={REPO_URL}>Star on GitHub</Link>
+        <Text size="xs" muted>
+          {pluginVersion}
+        </Text>
+      </Row>
     </Stack>
   )
 }
