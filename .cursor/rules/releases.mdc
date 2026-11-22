@@ -8,22 +8,23 @@ alwaysApply: true
 When cutting a GitHub release for this plugin (`gh release create` / editing release body):
 
 1. Bump `version` in `orca-plugin.json` and `src/version.ts`, commit, push `main`, tag `v<version>`, push the tag.
-2. In the release notes body, always include an **Update** section with the exact terminal command pinned to that tag:
+2. In the release notes body, always include an **Update** section with the exact terminal commands pinned to that tag.
+
+Catalog installs (`aywengo.omlx` from `orca-community-plugins`) cannot be overwritten by a Git URL. Release notes must tell people to uninstall the catalog copy first, then install the tag:
 
 ```markdown
 ## Update
 
+If you installed from the community catalog, remove that copy first, then install this tag:
+
 ```sh
+orca plugin uninstall aywengo.omlx
 orca plugin install aywengo/orca-mlx-plugin@vX.Y.Z
 ```
+
+If Orca asks for approval, re-run the install command with the `--approve …` fingerprint it prints.
 ```
 
 Replace `vX.Y.Z` with the tag for that release (e.g. `v1.2.0`). Do not omit the `@v…` ref.
 
-Optional catalog path (newest listed release, not a specific tag):
-
-```sh
-orca plugin update aywengo.omlx
-```
-
-Keep the tagged `install …@vX.Y.Z` command as the primary instruction.
+Do not present bare `orca plugin install …@v…` alone as the only step — catalog users hit “remove it first”.
