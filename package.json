@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test src/client.test.ts src/manifest.test.ts"
+    "test": "node --test src/client.test.ts src/connections.test.ts src/manifest.test.ts"
   },
   "devDependencies": {
     "ajv": "^8.17.1"

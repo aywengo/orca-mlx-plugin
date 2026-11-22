@@ -31,6 +31,9 @@ declare module 'orca' {
     'omlx.rotateKey': { input: { apiKey: string }; output: Rpc<Started> }
     'omlx.restart': { input: Record<string, never>; output: Rpc<Started> }
     'omlx.jobs': { input: Record<string, never>; output: Rpc<JobEvent[]> }
+    'omlx.selectConnection': { input: { id: string }; output: Rpc<RefreshData> }
+    'omlx.saveConnection': { input: { id?: string; name: string; baseUrl: string }; output: Rpc<RefreshData> }
+    'omlx.deleteConnection': { input: { id: string }; output: Rpc<RefreshData> }
   }
 
   interface PluginPanelEvents {

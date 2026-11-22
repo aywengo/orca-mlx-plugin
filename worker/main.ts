@@ -1,5 +1,18 @@
 import type { OrcaWorkerApi } from 'orca/worker'
 import { createClient, normalizeBaseUrl, OmlxError, type OmlxClient } from '../src/client.ts'
+import {
+  CONNECTIONS_STORAGE_KEY,
+  DEFAULT_BASE_URL,
+  LEGACY_SECRET_KEY,
+  activeConnection,
+  createConnection,
+  deleteConnection,
+  migrateLegacyConnections,
+  parseSavedConnections,
+  secretKeyFor,
+  selectConnection,
+  upsertConnection
+} from '../src/connections.ts'
 import type {
   Activity,
   ConnectionStatus,
@@ -8,18 +21,22 @@ import type {
   Overview,
   RefreshData,
   Rpc,
+  SavedConnection,
+  SavedConnections,
   Started
 } from '../src/types.ts'
 
-const SECRET_KEY = 'apiKey'
-
 interface Link {
+  connectionId: string
+  connectionName: string
   baseUrl: string
   apiKey: string | null
   pollSeconds: number
   secretsAvailable: boolean
   keySaved: boolean
   urlError: string | null
+  connections: SavedConnection[]
+  activeConnectionId: string
 }
 
 let stopped = false
@@ -95,6 +112,42 @@ export default function activate(orca: OrcaWorkerApi): void {
       const result = await client.abort(requireId(modelId), requestId)
       void enqueue(() => tick(orca))
       return result
+    })
+  )
+  orca.panels.handle('omlx.selectConnection', ({ id }) =>
+    rpc(async () => {
+      if (typeof id !== 'string' || !id) throw new OmlxError('invalid_params', 'Choose a saved connection.')
+      const store = await loadConnections(orca)
+      await saveConnections(orca, selectConnection(store, id))
+      return refresh(orca)
+    })
+  )
+  orca.panels.handle('omlx.saveConnection', ({ id, name, baseUrl }) =>
+    rpc(async () => {
+      if (typeof name !== 'string') throw new OmlxError('invalid_params', 'Enter a connection name.')
+      if (typeof baseUrl !== 'string') throw new OmlxError('invalid_params', 'Enter a server URL.')
+      const store = await loadConnections(orca)
+      const next = upsertConnection(store, {
+        id: typeof id === 'string' && id ? id : undefined,
+        name,
+        baseUrl
+      })
+      await saveConnections(orca, next)
+      return refresh(orca)
+    })
+  )
+  orca.panels.handle('omlx.deleteConnection', ({ id }) =>
+    rpc(async () => {
+      if (typeof id !== 'string' || !id) throw new OmlxError('invalid_params', 'Choose a connection to remove.')
+      const store = await loadConnections(orca)
+      const next = deleteConnection(store, id)
+      await saveConnections(orca, next)
+      try {
+        await orca.host.call('secrets.delete', { key: secretKeyFor(id) })
+      } catch {
+        // The secret may already be gone.
+      }
+      return refresh(orca)
     })
   )
 
@@ -183,6 +236,8 @@ function snapshotFrom(
   return {
     overview: {
       baseUrl: link.baseUrl,
+      connectionId: link.connectionId,
+      connectionName: link.connectionName,
       keySaved: link.keySaved,
       secretsAvailable: link.secretsAvailable,
       pollSeconds: link.pollSeconds,
@@ -192,6 +247,8 @@ function snapshotFrom(
       device,
       loadedCount: activity.models.length
     },
+    connections: link.connections,
+    activeConnectionId: link.activeConnectionId,
     models,
     activity,
     settings,
@@ -266,7 +323,7 @@ function startRotate(orca: OrcaWorkerApi, apiKey: unknown): Rpc<Started> {
       let stored = false
       if (link.secretsAvailable) {
         try {
-          await orca.host.call('secrets.set', { key: SECRET_KEY, value: apiKey })
+          await orca.host.call('secrets.set', { key: secretKeyFor(link.connectionId), value: apiKey })
           stored = true
         } catch {
           stored = false
@@ -302,9 +359,57 @@ function publish(orca: OrcaWorkerApi, event: JobEvent): void {
   orca.panels.post('omlx.job', event)
 }
 
-async function readLink(orca: OrcaWorkerApi): Promise<Link> {
+async function loadConnections(orca: OrcaWorkerApi): Promise<SavedConnections> {
+  let stored: unknown = null
+  try {
+    const result = await orca.host.call('storage.get', { key: CONNECTIONS_STORAGE_KEY })
+    stored = result.value
+  } catch {
+    stored = null
+  }
+  const parsed = parseSavedConnections(stored)
+  if (parsed) return parsed
+
   const settings = await orca.host.call('settings.get', {})
-  const baseRaw = typeof settings.settings.baseUrl === 'string' ? settings.settings.baseUrl : 'http://127.0.0.1:8000'
+  const baseRaw = typeof settings.settings.baseUrl === 'string' ? settings.settings.baseUrl : DEFAULT_BASE_URL
+  const migrated = migrateLegacyConnections(baseRaw)
+  await saveConnections(orca, migrated)
+  await migrateLegacySecret(orca, migrated.activeId)
+  return migrated
+}
+
+async function saveConnections(orca: OrcaWorkerApi, store: SavedConnections): Promise<void> {
+  await orca.host.call('storage.set', { key: CONNECTIONS_STORAGE_KEY, value: store })
+}
+
+async function migrateLegacySecret(orca: OrcaWorkerApi, connectionId: string): Promise<void> {
+  try {
+    const protection = await orca.host.call('secrets.protection', {})
+    if (protection.status !== 'os-keyring') return
+  } catch {
+    return
+  }
+  try {
+    const legacy = await orca.host.call('secrets.get', { key: LEGACY_SECRET_KEY })
+    const value = typeof legacy.value === 'string' && legacy.value.length > 0 ? legacy.value : null
+    if (!value) return
+    const nextKey = secretKeyFor(connectionId)
+    const existing = await orca.host.call('secrets.get', { key: nextKey })
+    if (typeof existing.value === 'string' && existing.value.length > 0) {
+      await orca.host.call('secrets.delete', { key: LEGACY_SECRET_KEY })
+      return
+    }
+    await orca.host.call('secrets.set', { key: nextKey, value })
+    await orca.host.call('secrets.delete', { key: LEGACY_SECRET_KEY })
+  } catch {
+    // Legacy key may be absent.
+  }
+}
+
+async function readLink(orca: OrcaWorkerApi): Promise<Link> {
+  const store = await loadConnections(orca)
+  const current = activeConnection(store)
+  const settings = await orca.host.call('settings.get', {})
   const pollRaw = settings.settings.pollSeconds
   const pollSeconds =
     typeof pollRaw === 'number' && Number.isFinite(pollRaw) ? Math.max(0, Math.min(300, Math.floor(pollRaw))) : 5
@@ -318,20 +423,31 @@ async function readLink(orca: OrcaWorkerApi): Promise<Link> {
   }
   if (secretsAvailable) {
     try {
-      const stored = await orca.host.call('secrets.get', { key: SECRET_KEY })
+      const stored = await orca.host.call('secrets.get', { key: secretKeyFor(current.id) })
       apiKey = typeof stored.value === 'string' && stored.value.length > 0 ? stored.value : null
     } catch {
       apiKey = null
     }
   }
-  let baseUrl = baseRaw.trim() || 'http://127.0.0.1:8000'
+  let baseUrl = current.baseUrl
   let urlError: string | null = null
   try {
     baseUrl = normalizeBaseUrl(baseUrl)
   } catch (error) {
     urlError = messageOf(error)
   }
-  return { baseUrl, apiKey, pollSeconds, secretsAvailable, keySaved: apiKey !== null, urlError }
+  return {
+    connectionId: current.id,
+    connectionName: current.name,
+    baseUrl,
+    apiKey,
+    pollSeconds,
+    secretsAvailable,
+    keySaved: apiKey !== null,
+    urlError,
+    connections: store.items,
+    activeConnectionId: store.activeId
+  }
 }
 
 async function clientOrThrow(orca: OrcaWorkerApi): Promise<OmlxClient> {
@@ -357,7 +473,7 @@ async function paint(orca: OrcaWorkerApi, overview: Overview): Promise<void> {
       text,
       icon: 'bot',
       tone: overview.status === 'ok' ? (overview.loadedCount > 0 ? 'success' : 'neutral') : 'warning',
-      tooltip: overview.message,
+      tooltip: `${overview.connectionName}: ${overview.message}`,
       visible: true
     })
   } catch {
@@ -426,9 +542,12 @@ function statusMessage(status: ConnectionStatus, failures: OmlxError[], activity
 }
 
 function emptyRefresh(message: string, status: ConnectionStatus): RefreshData {
+  const fallback = createConnection(DEFAULT_BASE_URL)
   return {
     overview: {
       baseUrl: '',
+      connectionId: fallback.id,
+      connectionName: fallback.name,
       keySaved: false,
       secretsAvailable: false,
       pollSeconds: lastPoll,
@@ -438,6 +557,8 @@ function emptyRefresh(message: string, status: ConnectionStatus): RefreshData {
       device: null,
       loadedCount: 0
     },
+    connections: [fallback],
+    activeConnectionId: fallback.id,
     models: [],
     activity: emptyActivity(),
     settings: null,

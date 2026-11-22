@@ -4,8 +4,8 @@
   "execution": "trusted-worker",
   "id": "omlx",
   "name": "oMLX",
-  "version": "1.1.6",
-  "description": "Manage a local oMLX server from Orca’s sidebar: save the API key in encrypted secrets, load and unload models, watch memory and live requests, edit base settings, and restart the server without leaving your workspace.",
+  "version": "1.2.0",
+  "description": "Manage one or more oMLX servers from Orca’s sidebar: named connections with per-server API keys in encrypted secrets, load and unload models, watch memory and live requests, edit base settings, and restart without leaving your workspace.",
   "homepage": "https://github.com/aywengo/orca-mlx-plugin",
   "repository": "https://github.com/aywengo/orca-mlx-plugin",
   "license": "MIT",
@@ -53,17 +53,9 @@
     ],
     "settings": [
       {
-        "key": "baseUrl",
-        "title": "Server URL",
-        "description": "oMLX admin origin. The usual local server is http://127.0.0.1:8000.",
-        "type": "string",
-        "default": "http://127.0.0.1:8000",
-        "placeholder": "http://127.0.0.1:8000"
-      },
-      {
         "key": "pollSeconds",
         "title": "Status poll interval",
-        "description": "How often the status bar asks oMLX which models are loaded. 0 pauses background polling.",
+        "description": "How often the status bar asks the active oMLX connection which models are loaded. 0 pauses background polling.",
         "type": "integer",
         "default": 5,
         "minimum": 0,
@@ -82,6 +74,7 @@
   "capabilities": [
     { "kind": "secrets:own" },
     { "kind": "settings:own" },
+    { "kind": "storage:own" },
     { "kind": "notifications:show" }
   ]
 }

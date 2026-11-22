@@ -34,7 +34,8 @@ import {
   type PanelContext,
   type Tone
 } from 'orca'
-import { assertApiKey, draftFromSettings, draftToPatch, normalizeBaseUrl, OmlxError } from './client.ts'
+import { assertApiKey, draftFromSettings, draftToPatch, OmlxError } from './client.ts'
+import { DEFAULT_BASE_URL, defaultConnectionName, secretKeyFor } from './connections.ts'
 import './protocol.ts'
 import type {
   AcceleratorCandidate,
@@ -44,6 +45,7 @@ import type {
   JobEvent,
   ModelSummary,
   Overview,
+  SavedConnection,
   SettingsDraft
 } from './types.ts'
 import { pluginVersion } from './version.ts'
@@ -77,7 +79,11 @@ const connectionOpen = atom('connectionOpen', true, { persist: 'plugin' })
 const history = atom<UsageSample[]>('usageHistory', [])
 const keyDraft = atom('')
 const rotateDraft = atom('')
-const urlDraft = atom('urlDraft', 'http://127.0.0.1:8000')
+const connections = atom<SavedConnection[]>([])
+const activeConnectionId = atom<string | null>(null)
+const nameDraft = atom('nameDraft', '')
+const nameDirty = atom('nameDirty', false)
+const urlDraft = atom('urlDraft', DEFAULT_BASE_URL)
 const urlDirty = atom('urlDirty', false)
 const logs = atom('')
 const logMeta = atom('')
@@ -182,63 +188,88 @@ function PanelFooter() {
 function ConnectionCard() {
   const current = read(overview)
   const status = current?.status ?? 'error'
+  const list = read(connections)
+  const activeId = read(activeConnectionId) ?? current?.connectionId ?? ''
   return (
     <Stack gap="sm">
-        <Row gap="sm" wrap>
-          <Badge tone={status === 'ok' ? 'success' : status === 'unauthorized' ? 'warning' : 'danger'}>
-            {statusLabel(status)}
-          </Badge>
-          <Badge tone={current?.keySaved ? 'success' : 'neutral'}>{current?.keySaved ? 'Key saved' : 'No key saved'}</Badge>
-          {current ? <Text muted>{current.message}</Text> : null}
-        </Row>
-        {current?.server ? (
-          <Text muted>
-            Listening on {current.server.host}:{current.server.port}
-            {current.device ? ` · ${deviceLine(current.device)}` : ''}
-          </Text>
-        ) : null}
-        <Text muted>
-          {current && current.pollSeconds > 0
-            ? `The status bar refreshes every ${current.pollSeconds} seconds.`
-            : 'Background polling is paused. Refresh to update the status bar.'}
-        </Text>
-        {current && !current.secretsAvailable ? (
-          <Callout tone="warning" title="Secrets are unavailable" icon="warning">
-            <Text>This machine cannot store an API key in Orca’s secret store. The key is not kept in settings.</Text>
-          </Callout>
-        ) : (
-          <Stack gap="xs">
-            <Input
-              label="API key"
-              type="password"
-              value={read(keyDraft)}
-              placeholder="Main oMLX key"
-              onChange={(value) => set(keyDraft, value)}
-            />
-            <Row gap="sm" wrap>
-              <Button icon="check" onPress={() => void saveKey()}>
-                Save key
-              </Button>
-              <Button variant="ghost" disabled={!current?.keySaved} onPress={() => void clearKey()}>
-                Remove saved key
-              </Button>
-            </Row>
-          </Stack>
-        )}
-        <Field label="Server URL" description="Also listed in Orca Settings for this plugin.">
-          <Input
-            label="Server URL"
-            labelHidden
-            value={read(urlDraft)}
-            onChange={(value) => {
-              set(urlDirty, true)
-              set(urlDraft, value)
-            }}
-          />
-        </Field>
-        <Button variant="outline" onPress={() => void saveUrl()}>
-          Save URL
+      <Select
+        label="Connection"
+        value={activeId}
+        options={list.map((item) => ({ value: item.id, label: item.name }))}
+        onChange={(value) => void chooseConnection(value)}
+      />
+      <Row gap="sm" wrap>
+        <Button variant="outline" onPress={() => void addConnection()}>
+          Add connection
         </Button>
+        <Button variant="ghost" disabled={list.length <= 1 || !activeId} onPress={() => void removeConnection()}>
+          Delete
+        </Button>
+      </Row>
+      <Row gap="sm" wrap>
+        <Badge tone={status === 'ok' ? 'success' : status === 'unauthorized' ? 'warning' : 'danger'}>
+          {statusLabel(status)}
+        </Badge>
+        <Badge tone={current?.keySaved ? 'success' : 'neutral'}>{current?.keySaved ? 'Key saved' : 'No key saved'}</Badge>
+        {current ? <Text muted>{current.message}</Text> : null}
+      </Row>
+      {current?.server ? (
+        <Text muted>
+          Listening on {current.server.host}:{current.server.port}
+          {current.device ? ` · ${deviceLine(current.device)}` : ''}
+        </Text>
+      ) : null}
+      <Text muted>
+        {current && current.pollSeconds > 0
+          ? `The status bar refreshes every ${current.pollSeconds} seconds.`
+          : 'Background polling is paused. Refresh to update the status bar.'}
+      </Text>
+      <Input
+        label="Name"
+        value={read(nameDraft)}
+        placeholder="Hostname by default"
+        onChange={(value) => {
+          set(nameDirty, true)
+          set(nameDraft, value)
+        }}
+      />
+      <Field label="Server URL" description="Each connection has its own URL and API key.">
+        <Input
+          label="Server URL"
+          labelHidden
+          value={read(urlDraft)}
+          onChange={(value) => {
+            set(urlDirty, true)
+            set(urlDraft, value)
+          }}
+        />
+      </Field>
+      <Button variant="outline" onPress={() => void saveConnectionFields()}>
+        Save connection
+      </Button>
+      {current && !current.secretsAvailable ? (
+        <Callout tone="warning" title="Secrets are unavailable" icon="warning">
+          <Text>This machine cannot store an API key in Orca’s secret store. The key is not kept in settings.</Text>
+        </Callout>
+      ) : (
+        <Stack gap="xs">
+          <Input
+            label="API key"
+            type="password"
+            value={read(keyDraft)}
+            placeholder="Main oMLX key"
+            onChange={(value) => set(keyDraft, value)}
+          />
+          <Row gap="sm" wrap>
+            <Button icon="check" onPress={() => void saveKey()}>
+              Save key
+            </Button>
+            <Button variant="ghost" disabled={!current?.keySaved} onPress={() => void clearKey()}>
+              Remove saved key
+            </Button>
+          </Row>
+        </Stack>
+      )}
     </Stack>
   )
 }
@@ -838,20 +869,7 @@ async function reload(): Promise<void> {
       set(phase, 'ready')
       return
     }
-    const data = result.data
-    set(overview, data.overview)
-    set(models, data.models)
-    set(activity, data.activity)
-    recordUsage(data.activity, data.models)
-    set(settings, data.settings)
-    set(settingsError, data.settingsError)
-    set(jobs, data.jobs)
-    if (!read(urlDirty)) set(urlDraft, data.overview.baseUrl || read(urlDraft))
-    if (data.settings && !read(dirty)) set(settingsDraft, draftFromSettings(data.settings))
-    const selected = read(selectedModel)
-    if (selected && !data.models.some((model) => model.id === selected) && !data.activity.models.some((model) => model.id === selected)) {
-      set(selectedModel, null)
-    }
+    applyRefresh(result.data)
     set(phase, 'ready')
   } catch (error) {
     set(notice, messageOf(error))
@@ -859,15 +877,141 @@ async function reload(): Promise<void> {
   }
 }
 
+function applyRefresh(data: {
+  overview: Overview
+  connections: SavedConnection[]
+  activeConnectionId: string
+  models: ModelSummary[]
+  activity: Activity
+  settings: BaseSettings | null
+  settingsError: string | null
+  jobs: JobEvent[]
+}): void {
+  const previousId = read(activeConnectionId)
+  if (previousId && previousId !== data.activeConnectionId) {
+    set(history, [])
+    set(selectedModel, null)
+    set(selectedRequest, null)
+    set(keyDraft, '')
+    set(logs, '')
+    set(logMeta, '')
+    set(logsError, null)
+    set(helpers, null)
+    set(helpersError, null)
+    set(nameDirty, false)
+    set(urlDirty, false)
+  }
+  set(overview, data.overview)
+  set(connections, data.connections)
+  set(activeConnectionId, data.activeConnectionId)
+  set(models, data.models)
+  set(activity, data.activity)
+  recordUsage(data.activity, data.models)
+  set(settings, data.settings)
+  set(settingsError, data.settingsError)
+  set(jobs, data.jobs)
+  const active = data.connections.find((item) => item.id === data.activeConnectionId) ?? data.connections[0]
+  if (active) {
+    if (!read(nameDirty)) set(nameDraft, active.name)
+    if (!read(urlDirty)) set(urlDraft, active.baseUrl || data.overview.baseUrl || DEFAULT_BASE_URL)
+  }
+  if (data.settings && !read(dirty)) set(settingsDraft, draftFromSettings(data.settings))
+  const selected = read(selectedModel)
+  if (
+    selected &&
+    !data.models.some((model) => model.id === selected) &&
+    !data.activity.models.some((model) => model.id === selected)
+  ) {
+    set(selectedModel, null)
+  }
+}
+
+async function chooseConnection(id: string): Promise<void> {
+  if (!id || id === read(activeConnectionId)) return
+  try {
+    const result = await plugin.request('omlx.selectConnection', { id }, { timeoutMs: 30000 })
+    if (!result.ok) {
+      set(notice, result.message)
+      return
+    }
+    applyRefresh(result.data)
+    set(notice, `Switched to ${result.data.overview.connectionName}.`)
+  } catch (error) {
+    set(notice, messageOf(error))
+  }
+}
+
+async function addConnection(): Promise<void> {
+  try {
+    const baseUrl = DEFAULT_BASE_URL
+    const result = await plugin.request(
+      'omlx.saveConnection',
+      { name: defaultConnectionName(baseUrl), baseUrl },
+      { timeoutMs: 30000 }
+    )
+    if (!result.ok) {
+      set(notice, result.message)
+      return
+    }
+    applyRefresh(result.data)
+    set(notice, `Added ${result.data.overview.connectionName}.`)
+  } catch (error) {
+    set(notice, messageOf(error))
+  }
+}
+
+async function removeConnection(): Promise<void> {
+  const id = read(activeConnectionId)
+  if (!id) return
+  try {
+    const result = await plugin.request('omlx.deleteConnection', { id }, { timeoutMs: 30000 })
+    if (!result.ok) {
+      set(notice, result.message)
+      return
+    }
+    applyRefresh(result.data)
+    set(notice, `Now using ${result.data.overview.connectionName}.`)
+  } catch (error) {
+    set(notice, messageOf(error))
+  }
+}
+
+async function saveConnectionFields(): Promise<void> {
+  const id = read(activeConnectionId)
+  if (!id) return
+  try {
+    const result = await plugin.request(
+      'omlx.saveConnection',
+      { id, name: read(nameDraft), baseUrl: read(urlDraft) },
+      { timeoutMs: 30000 }
+    )
+    if (!result.ok) {
+      set(notice, result.message)
+      return
+    }
+    set(nameDirty, false)
+    set(urlDirty, false)
+    applyRefresh(result.data)
+    set(notice, 'Connection saved.')
+  } catch (error) {
+    set(notice, messageOf(error))
+  }
+}
+
 async function saveKey(): Promise<void> {
   try {
+    const id = read(activeConnectionId)
+    if (!id) {
+      set(notice, 'Choose a connection first.')
+      return
+    }
     const protection = await orca.host.call('secrets.protection', {})
     if (protection.status !== 'os-keyring') {
       set(notice, 'This machine cannot store the API key in Orca secrets.')
       return
     }
     const key = assertApiKey(read(keyDraft))
-    await orca.host.call('secrets.set', { key: 'apiKey', value: key })
+    await orca.host.call('secrets.set', { key: secretKeyFor(id), value: key })
     set(keyDraft, '')
     set(notice, 'API key saved.')
     await reload()
@@ -878,21 +1022,13 @@ async function saveKey(): Promise<void> {
 
 async function clearKey(): Promise<void> {
   try {
-    await orca.host.call('secrets.delete', { key: 'apiKey' })
+    const id = read(activeConnectionId)
+    if (!id) {
+      set(notice, 'Choose a connection first.')
+      return
+    }
+    await orca.host.call('secrets.delete', { key: secretKeyFor(id) })
     set(notice, 'Saved API key removed.')
-    await reload()
-  } catch (error) {
-    set(notice, messageOf(error))
-  }
-}
-
-async function saveUrl(): Promise<void> {
-  try {
-    const url = normalizeBaseUrl(read(urlDraft))
-    await orca.host.call('settings.set', { key: 'baseUrl', value: url })
-    set(urlDirty, false)
-    set(urlDraft, url)
-    set(notice, 'Server URL saved.')
     await reload()
   } catch (error) {
     set(notice, messageOf(error))
@@ -1114,9 +1250,9 @@ function deviceLine(device: NonNullable<Overview['device']>): string {
 }
 
 function connectionSummary(current: Overview | null): string {
-  if (!current) return 'Server URL and API key'
+  if (!current) return 'Named servers and API keys'
   const where = current.server ? `${current.server.host}:${current.server.port}` : current.baseUrl || 'No URL'
-  return `${statusLabel(current.status)} · ${where} · ${current.keySaved ? 'Key saved' : 'No key'}`
+  return `${current.connectionName} · ${statusLabel(current.status)} · ${where} · ${current.keySaved ? 'Key saved' : 'No key'}`
 }
 
 function recordUsage(current: Activity, catalog: ModelSummary[]): void {

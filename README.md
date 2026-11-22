@@ -1,6 +1,6 @@
 # oMLX for Orca
 
-An [Orca](https://orca.dev) sidebar plugin for a running [oMLX](https://github.com/jundot/omlx) server on Apple Silicon. Use it when you serve local MLX models and want to manage them next to your agents: save the main API key in Orca’s encrypted secrets, load and unload models, watch memory and live requests, edit base settings, and restart the server without leaving the workspace.
+An [Orca](https://orca.dev) sidebar plugin for one or more [oMLX](https://github.com/jundot/omlx) servers on Apple Silicon. Use it when you serve local MLX models and want to manage them next to your agents: keep named connections (hostname by default) with per-server API keys in Orca’s encrypted secrets, load and unload models, watch memory and live requests, edit base settings, and restart without leaving the workspace.
 
 The panel cannot open network connections. A trusted worker calls the oMLX admin API and the panel talks only to that worker.
 
@@ -8,9 +8,10 @@ Listing page: [orca.dev/plugins/aywengo/orca-mlx-plugin](https://orca.dev/plugin
 
 ## What you can do
 
-- Save the main API key. The panel shows whether a key is stored, and never shows the key again. The connection section collapses, and that choice is remembered.
+- Add multiple named connections (default name is the server hostname) and switch between them. Each connection has its own URL and API key.
+- Save the main API key per connection. The panel shows whether a key is stored, and never shows the key again. The connection section collapses, and that choice is remembered.
 - See bar meters for memory, model size, live requests, prefill, generation speed, and recent memory samples.
-- Set the server URL (default `http://127.0.0.1:8000`) and how often the status bar polls.
+- Set how often the status bar polls the active connection.
 - Load, unload, pin, and mark a default model. Rescan the model directories.
 - Watch models that are loaded, including waiting, prefill, and generation, and abort one request.
 - Edit host, port, log level, model directories, scheduler, memory guard, cache sizes, sampling defaults, and the idle timeout.
@@ -44,7 +45,7 @@ The same check the plugin directory runs:
 orca plugin validate .
 ```
 
-Server URL and poll interval also appear under Settings, on this plugin’s row. Host and port changes on the oMLX server apply after a restart.
+Poll interval appears under Settings, on this plugin’s row. Connections are managed in the panel. Host and port changes on the oMLX server apply after a restart.
 
 ## Develop
 

@@ -190,8 +190,21 @@ export interface LogTail {
   totalLines: number
 }
 
+export interface SavedConnection {
+  id: string
+  name: string
+  baseUrl: string
+}
+
+export interface SavedConnections {
+  items: SavedConnection[]
+  activeId: string
+}
+
 export interface Overview {
   baseUrl: string
+  connectionId: string
+  connectionName: string
   keySaved: boolean
   secretsAvailable: boolean
   pollSeconds: number
@@ -213,11 +226,18 @@ export interface JobEvent {
 
 export interface RefreshData {
   overview: Overview
+  connections: SavedConnection[]
+  activeConnectionId: string
   models: ModelSummary[]
   activity: Activity
   settings: BaseSettings | null
   settingsError: string | null
   jobs: JobEvent[]
+}
+
+export interface ConnectionsResult {
+  connections: SavedConnection[]
+  activeConnectionId: string
 }
 
 export interface Started {
