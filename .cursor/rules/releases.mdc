@@ -1,0 +1,29 @@
+---
+description: GitHub release notes must include the terminal install/update command pinned to the version tag
+alwaysApply: true
+---
+
+# Release notes
+
+When cutting a GitHub release for this plugin (`gh release create` / editing release body):
+
+1. Bump `version` in `orca-plugin.json` and `src/version.ts`, commit, push `main`, tag `v<version>`, push the tag.
+2. In the release notes body, always include an **Update** section with the exact terminal command pinned to that tag:
+
+```markdown
+## Update
+
+```sh
+orca plugin install aywengo/orca-mlx-plugin@vX.Y.Z
+```
+```
+
+Replace `vX.Y.Z` with the tag for that release (e.g. `v1.2.0`). Do not omit the `@v…` ref.
+
+Optional catalog path (newest listed release, not a specific tag):
+
+```sh
+orca plugin update aywengo.omlx
+```
+
+Keep the tagged `install …@vX.Y.Z` command as the primary instruction.
